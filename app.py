@@ -5,7 +5,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, jsonify, send_file
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -24,6 +24,9 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PRIVATE_EXE_PATH = os.path.join(BASE_DIR, "UniRecoil.exe")
 
 VARIANT_DURATION_MAP = {
     1064675: {"duration_hours": 24},
@@ -182,3 +185,29 @@ def launcher_validate():
         "message": message,
         "meta": meta,
     }), 200
+
+
+@app.post("/launcher/download")
+def launcher_download():
+    payload = request.get_json(force=True, silent=True) or {}
+    key = payload.get("key")
+
+    is_valid, message, _ = validate_key_value(key)
+    if not is_valid:
+        return jsonify({
+            "ok": False,
+            "message": message,
+        }), 400
+
+    if not os.path.exists(PRIVATE_EXE_PATH):
+        return jsonify({
+            "ok": False,
+            "message": "Private executable not found on server",
+        }), 500
+
+    return send_file(
+        PRIVATE_EXE_PATH,
+        as_attachment=True,
+        download_name="UniRecoil.exe",
+        mimetype="application/octet-stream",
+    )
