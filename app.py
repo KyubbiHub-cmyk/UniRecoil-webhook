@@ -25,10 +25,11 @@ db = firestore.client()
 
 # Replace these with your real SellAuth variant IDs
 VARIANT_DURATION_MAP = {
-    1111: {"duration_hours": 24},  # 24 Hours
-    2222: {"duration_days": 7},    # 7 Days
-    3333: {"duration_days": 30},   # 30 Days
+    1064675: {"duration_hours": 24},  # UniRecoil - 24hrs
+    1072863: {"duration_days": 7},    # UniRecoil - 7 days
+    1072864: {"duration_days": 30},   # UniRecoil - 30 days
 }
+
 
 
 def generate_numeric_key(length=24):
