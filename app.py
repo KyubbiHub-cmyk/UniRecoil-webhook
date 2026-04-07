@@ -5,6 +5,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import boto3
 from flask import Flask, request, Response, jsonify, send_file
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -13,6 +14,12 @@ app = Flask(__name__)
 
 SELLAUTH_WEBHOOK_SECRET = os.environ.get("SELLAUTH_WEBHOOK_SECRET", "")
 FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
+R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL", "")
+R2_OBJECT_KEY = "UniRecoil.exe"
 
 if not FIREBASE_SERVICE_ACCOUNT_JSON:
     raise RuntimeError("Missing FIREBASE_SERVICE_ACCOUNT_JSON environment variable")
@@ -25,8 +32,13 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PRIVATE_EXE_PATH = os.path.join(BASE_DIR, "UniRecoil.exe")
+s3 = boto3.client(
+    "s3",
+    endpoint_url=R2_ENDPOINT_URL,
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    region_name="auto",
+)
 
 VARIANT_DURATION_MAP = {
     1064675: {"duration_hours": 24},
@@ -199,15 +211,22 @@ def launcher_download():
             "message": message,
         }), 400
 
-    if not os.path.exists(PRIVATE_EXE_PATH):
+    try:
+        signed_url = s3.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": R2_BUCKET_NAME,
+                "Key": R2_OBJECT_KEY,
+            },
+            ExpiresIn=300,
+        )
+    except Exception as e:
         return jsonify({
             "ok": False,
-            "message": "Private executable not found on server",
+            "message": f"Could not create download URL: {e}",
         }), 500
 
-    return send_file(
-        PRIVATE_EXE_PATH,
-        as_attachment=True,
-        download_name="UniRecoil.exe",
-        mimetype="application/octet-stream",
-    )
+    return jsonify({
+        "ok": True,
+        "url": signed_url,
+    }), 200
