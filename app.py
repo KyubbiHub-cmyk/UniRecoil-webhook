@@ -3,7 +3,9 @@ import json
 import hmac
 import hashlib
 import secrets
-from flask import Flask, request, Response
+from datetime import datetime, timedelta, timezone
+
+from flask import Flask, request, Response, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -23,13 +25,11 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 
-# Replace these with your real SellAuth variant IDs
 VARIANT_DURATION_MAP = {
-    1064675: {"duration_hours": 24},  # UniRecoil - 24hrs
-    1072863: {"duration_days": 7},    # UniRecoil - 7 days
-    1072864: {"duration_days": 30},   # UniRecoil - 30 days
+    1064675: {"duration_hours": 24},
+    1072863: {"duration_days": 7},
+    1072864: {"duration_days": 30},
 }
-
 
 
 def generate_numeric_key(length=24):
@@ -51,6 +51,59 @@ def verify_signature(raw_body, signature):
         hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature or "")
+
+
+def get_expiry_from_doc(doc, data):
+    created_at = doc.create_time
+    if created_at is None:
+        return None
+
+    expires_at = data.get("expires_at")
+    if expires_at is not None:
+        return expires_at
+
+    duration_hours = data.get("duration_hours")
+    duration_days = data.get("duration_days")
+
+    if duration_hours is not None:
+        return created_at + timedelta(hours=float(duration_hours))
+    if duration_days is not None:
+        return created_at + timedelta(days=float(duration_days))
+
+    return created_at + timedelta(hours=24)
+
+
+def validate_key_value(key):
+    key = (key or "").strip()
+    if not key:
+        return False, "Missing key", None
+
+    doc_ref = db.collection("Script").document(key)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        return False, "Invalid key", None
+
+    data = doc.to_dict()
+
+    if data.get("valid") is not True:
+        return False, "Invalid key", None
+
+    expires_at = get_expiry_from_doc(doc, data)
+    if expires_at is None:
+        return False, "Key has no expiry", None
+
+    now = datetime.now(timezone.utc)
+    if now > expires_at:
+        doc_ref.delete()
+        return False, "Key expired", None
+
+    return True, "Valid key", {
+        "expires_at": expires_at.isoformat(),
+        "used": bool(data.get("used", False)),
+        "duration_hours": data.get("duration_hours"),
+        "duration_days": data.get("duration_days"),
+    }
 
 
 @app.get("/")
@@ -81,31 +134,5 @@ def sellauth_delivery():
     if variant_id not in VARIANT_DURATION_MAP:
         return Response("Unknown variant", status=400)
 
-    # Prevent duplicate key creation if SellAuth retries
     delivery_ref = db.collection("deliveries").document(item_id)
-    existing = delivery_ref.get()
-    if existing.exists:
-        existing_key = existing.to_dict()["key"]
-        return Response(existing_key, status=200, mimetype="text/plain")
-
-    key = generate_unique_key()
-    duration_data = VARIANT_DURATION_MAP[variant_id]
-
-    db.collection("Script").document(key).set({
-        "valid": True,
-        "used": False,
-        **duration_data,
-        "email": customer.get("email"),
-        "invoice_id": invoice_id,
-        "invoice_item_id": item["id"],
-        "variant_id": variant_id,
-        "source": "sellauth",
-    })
-
-    delivery_ref.set({
-        "key": key,
-        "invoice_id": invoice_id,
-        "invoice_item_id": item["id"],
-    })
-
-    return Response(key, status=200, mimetype="text/plain")
+    existing =
