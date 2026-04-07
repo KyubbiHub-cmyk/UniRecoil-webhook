@@ -135,4 +135,50 @@ def sellauth_delivery():
         return Response("Unknown variant", status=400)
 
     delivery_ref = db.collection("deliveries").document(item_id)
-    existing =
+    existing = delivery_ref.get()
+
+    if existing.exists:
+        existing_key = existing.to_dict()["key"]
+        return Response(existing_key, status=200, mimetype="text/plain")
+
+    key = generate_unique_key()
+    duration_data = VARIANT_DURATION_MAP[variant_id]
+
+    db.collection("Script").document(key).set({
+        "valid": True,
+        "used": False,
+        **duration_data,
+        "email": customer.get("email"),
+        "invoice_id": invoice_id,
+        "invoice_item_id": item["id"],
+        "variant_id": variant_id,
+        "source": "sellauth",
+    })
+
+    delivery_ref.set({
+        "key": key,
+        "invoice_id": invoice_id,
+        "invoice_item_id": item["id"],
+    })
+
+    return Response(key, status=200, mimetype="text/plain")
+
+
+@app.post("/launcher/validate")
+def launcher_validate():
+    payload = request.get_json(force=True, silent=True) or {}
+    key = payload.get("key")
+
+    is_valid, message, meta = validate_key_value(key)
+
+    if not is_valid:
+        return jsonify({
+            "ok": False,
+            "message": message,
+        }), 400
+
+    return jsonify({
+        "ok": True,
+        "message": message,
+        "meta": meta,
+    }), 200
